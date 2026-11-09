@@ -1,3 +1,5 @@
+import pytest
+
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -625,3 +627,58 @@ def test_cors_vary_origin_with_gzip(test_client_factory: TestClientFactory) -> N
         "Accept-Encoding",
         "Origin",
     }
+
+
+@pytest.mark.parametrize(
+    "requested_headers",
+    [
+        "X-Example, ",  # trailing empty element
+        "X-Example, , content-type",  # intermediate empty element
+        ", X-Example",  # leading empty element
+        "X-Example,,content-type",  # adjacent commas, no spaces
+    ],
+)
+def test_cors_preflight_ignores_empty_request_header_elements(
+    test_client_factory: TestClientFactory, requested_headers: str
+) -> None:
+    app = CORSMiddleware(
+        app=PlainTextResponse("OK"),
+        allow_origins=["https://example.org"],
+        allow_methods=["GET"],
+        allow_headers=["X-Example"],
+    )
+    client = test_client_factory(app)
+    response = client.options(
+        "/",
+        headers={
+            "Origin": "https://example.org",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": requested_headers,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "OK"
+
+
+def test_cors_preflight_rejects_disallowed_header_alongside_empty_elements(
+    test_client_factory: TestClientFactory,
+) -> None:
+    app = CORSMiddleware(
+        app=PlainTextResponse("OK"),
+        allow_origins=["https://example.org"],
+        allow_methods=["GET"],
+        allow_headers=["X-Example"],
+    )
+    client = test_client_factory(app)
+    response = client.options(
+        "/",
+        headers={
+            "Origin": "https://example.org",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "X-Example, , X-Nope",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.text == "Disallowed CORS headers"
